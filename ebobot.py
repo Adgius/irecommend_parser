@@ -1,6 +1,5 @@
 import undetected_chromedriver as uc
 import re
-import requests
 import pandas as pd
 import time
 import random
@@ -13,23 +12,26 @@ class EboboParser():
     def __init__(self):
         os.makedirs('output', exist_ok=True)
         self.head_link = 'https://irecommend.ru'
-        self.driver = uc.Chrome()
+        options  = uc.ChromeOptions()
+        options.add_argument("--headless")
+        #options.capabilities['pageLoadStrategy'] = "none"
+        self.driver = uc.Chrome(options = options)
 
     def random_sleep(self):
         time.sleep(random.randint(1, 3))
 
     def notice_product(self, prod_link):
-        products_table = pd.read_csv(r'output\products_link.csv', sep=';')
-        products_table.loc[products_table['link'] == prod_link, 'parsed'] = True
+        products_table = pd.read_csv(r'output\products_link.csv', sep=';', index_col=0)
+        products_table.loc[products_table.index == prod_link, 'parsed'] = True
         products_table.to_csv(r'output\products_link.csv', index=False, sep=';')
     
     def parse_products(self, url, page):
         products_table = pd.DataFrame(columns=['title', 'rating', 'parsed'])
-        self.driver.get(url)
+        self.driver.get(url + f'?page={page}')
         products_page = self.driver.page_source
         soup = BeautifulSoup(products_page, 'html.parser')
         products = soup.select('.ProductTizer.plate.teaser-item')
-        print(f'Опа ча. На {page} странице нашел {len(products)} продуктов')
+        print(f'|-Опа ча. На {page+1} странице нашел {len(products)} продуктов')
         for p in products:
             title = p.find('div', {'class': 'title'}).text
             rating = p.find('span', {'class': 'average-rating'}).text
@@ -39,14 +41,19 @@ class EboboParser():
         if os.path.isfile(r'output\products_link.csv'):
             prod = pd.read_csv(r'output\products_link.csv', sep=';', index_col=0)
             products_table = pd.concat([prod, products_table])
+            products_table['parsed'] = products_table['parsed'].astype(bool)
+            products_table = products_table.sort_values('parsed', ascending=False).drop_duplicates(['title', 'rating'], ignore_index=False)
         products_table.to_csv(r'output\products_link.csv', sep=';')
-        return products_table.index.values
+        return products_table[~products_table['parsed']].index.values
 
     def get_reviews(self, prod_url):
         reviews_link = pd.DataFrame(columns=['prod_link', 'review_link', 'review'])
         self.driver.get(prod_url)
         reviews_page = self.driver.page_source
         soup = BeautifulSoup(reviews_page, 'html.parser')
+
+        title = soup.find('h1', {'class': 'largeHeader'}).find('span').text
+        print(f'|---Парсим отзывы {title}')
         items = soup.find('ul', {'class': 'list-comments'})
         reviews = items.find_all('li')
         random.shuffle(reviews)
@@ -56,7 +63,6 @@ class EboboParser():
             reviews_link.loc[n, ] = [prod_url, review_link, None]
         if soup.find('ul', {'class': 'pager'}):
             review_pages = int(soup.find('li', {'class': 'pager-last'}).text)
-            print('Всего страниц', review_pages)
         if os.path.isfile(r'output\reviews_link.csv'):
             table = pd.read_csv(r'output\reviews_link.csv', sep=';')
             reviews_link = pd.concat([table, reviews_link])
@@ -89,15 +95,17 @@ class EboboParser():
         return title, part
 
     def agg_reviews_text(self, prod_link, review_pages,  reviews_link):
+        
+        print(f'|------Нашлось {review_pages} страниц отзывов')
 
         def save_review(reviews_link):
-            for review_link in reviews_link:
+            for review_link in tqdm(reviews_link):
                 title, text = self.parse_review_text(review_link)
                 table = pd.read_csv(r'output\reviews_link.csv', sep=';')
                 key = table['prod_link'] == prod_link
                 key = key & (table['review_link'] == review_link)
-                table.loc[key, 'review'] = {'title': title, 'text': text}
-                reviews_link.to_csv(r'output\reviews_link.csv', index=False, sep=';')
+                table.loc[key, 'review'] = [{'title': title, 'text': text}]
+                table.to_csv(r'output\reviews_link.csv', index=False, sep=';')
 
         random.shuffle(reviews_link)
 
@@ -130,7 +138,7 @@ class EboboParser():
                 review_pages,  reviews_link = self.get_reviews(prod_link)
                 self.random_sleep()
                 self.agg_reviews_text(prod_link, review_pages,  reviews_link)
-            self.notice_product(prod_link)
+                self.notice_product(prod_link)
 
 
     
