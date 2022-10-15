@@ -38,10 +38,10 @@ class EboboParser():
             rating = float(re.search(r'[\d\.]+', rating)[0])
             link = self.head_link + p.find('a', {'class': 'read-all-reviews-link'})['href']
             products_table.loc[link] = [title, rating, False]
+            products_table['parsed'] = products_table['parsed'].astype(bool)
         if os.path.isfile(r'output\products_link.csv'):
             prod = pd.read_csv(r'output\products_link.csv', sep=';', index_col=0)
             products_table = pd.concat([prod, products_table])
-            products_table['parsed'] = products_table['parsed'].astype(bool)
             products_table = products_table.sort_values('parsed', ascending=False).drop_duplicates(['title', 'rating'], ignore_index=False)
         products_table.to_csv(r'output\products_link.csv', sep=';')
         return products_table[~products_table['parsed']].index.values
@@ -66,6 +66,7 @@ class EboboParser():
         if os.path.isfile(r'output\reviews_link.csv'):
             table = pd.read_csv(r'output\reviews_link.csv', sep=';')
             reviews_link = pd.concat([table, reviews_link])
+            reviews_link = reviews_link.sort_values('review').drop_duplicates(['prod_link', 'review_link'], ignore_index=False)
         reviews_link.to_csv(r'output\reviews_link.csv', index=False, sep=';')
         self.random_sleep()
         return review_pages, reviews_link['review_link'].values
@@ -153,4 +154,4 @@ if __name__ == '__main__':
 
     """)
     parser = EboboParser()
-    parser.main('https://irecommend.ru/catalog/list/6')
+    parser.main('https://irecommend.ru/catalog/list/31')
