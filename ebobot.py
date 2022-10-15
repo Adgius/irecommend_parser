@@ -23,7 +23,7 @@ class EboboParser():
     def notice_product(self, prod_link):
         products_table = pd.read_csv(r'output\products_link.csv', sep=';', index_col=0)
         products_table.loc[products_table.index == prod_link, 'parsed'] = True
-        products_table.to_csv(r'output\products_link.csv', index=False, sep=';')
+        products_table.to_csv(r'output\products_link.csv', sep=';')
     
     def parse_products(self, url, page):
         products_table = pd.DataFrame(columns=['title', 'rating', 'parsed'])
@@ -37,16 +37,16 @@ class EboboParser():
             rating = p.find('span', {'class': 'average-rating'}).text
             rating = float(re.search(r'[\d\.]+', rating)[0])
             link = self.head_link + p.find('a', {'class': 'read-all-reviews-link'})['href']
-            products_table.loc[link] = [title, rating, False]
-            products_table['parsed'] = products_table['parsed'].astype(bool)
+            products_table.loc[link] = [title, rating, False]   
         if os.path.isfile(r'output\products_link.csv'):
             prod = pd.read_csv(r'output\products_link.csv', sep=';', index_col=0)
             products_table = pd.concat([prod, products_table])
             products_table = products_table.sort_values('parsed', ascending=False).drop_duplicates(['title', 'rating'], ignore_index=False)
+        products_table['parsed'] = products_table['parsed'].astype(bool)
         products_table.to_csv(r'output\products_link.csv', sep=';')
         return products_table[~products_table['parsed']].index.values
 
-    def get_reviews(self, prod_url):
+    def get_reviews(self, prod_url, check_pages=True):
         reviews_link = pd.DataFrame(columns=['prod_link', 'review_link', 'review'])
         self.driver.get(prod_url)
         reviews_page = self.driver.page_source
@@ -61,8 +61,9 @@ class EboboParser():
         for n, rev in enumerate(reviews):
             review_link = self.head_link + rev.select('div.reviewTextSnippet a.more')[0]['href']
             reviews_link.loc[n, ] = [prod_url, review_link, None]
-        if soup.find('ul', {'class': 'pager'}):
-            review_pages = int(soup.find('li', {'class': 'pager-last'}).text)
+        if check_pages:
+            if soup.find('ul', {'class': 'pager'}):
+                review_pages = int(soup.find('li', {'class': 'pager-last'}).text)
         if os.path.isfile(r'output\reviews_link.csv'):
             table = pd.read_csv(r'output\reviews_link.csv', sep=';')
             reviews_link = pd.concat([table, reviews_link])
@@ -113,7 +114,7 @@ class EboboParser():
         save_review(reviews_link)
         if review_pages > 1:
             for review_page in range(review_pages):
-                _,  reviews_link = self.get_reviews(prod_link + f'?page={review_page}')
+                _,  reviews_link = self.get_reviews(prod_link + f'?page={review_page}', check_pages=False)
                 self.random_sleep()
                 random.shuffle(reviews_link)
                 save_review(reviews_link)
