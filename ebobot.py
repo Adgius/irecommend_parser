@@ -15,7 +15,8 @@ class EboboParser():
         options  = uc.ChromeOptions()
         options.add_argument("--headless")
         #options.capabilities['pageLoadStrategy'] = "none"
-        self.driver = uc.Chrome(options = options)
+        #self.driver = uc.Chrome(options = options)
+        self.driver = uc.Chrome()
 
     def random_sleep(self):
         time.sleep(random.randint(1, 3))
@@ -70,7 +71,7 @@ class EboboParser():
             reviews_link = reviews_link.sort_values('review').drop_duplicates(['prod_link', 'review_link'], ignore_index=False)
         reviews_link.to_csv(r'output\reviews_link.csv', index=False, sep=';')
         self.random_sleep()
-        return review_pages, reviews_link['review_link'].values
+        return review_pages, reviews_link.loc[reviews_link['review'].isna(), 'review_link'].values
 
 
     def parse_review_text(self, url):
@@ -110,14 +111,14 @@ class EboboParser():
                 table.to_csv(r'output\reviews_link.csv', index=False, sep=';')
 
         random.shuffle(reviews_link)
-
         save_review(reviews_link)
         if review_pages > 1:
-            for review_page in range(review_pages):
+            for review_page in range(1, review_pages):
                 _,  reviews_link = self.get_reviews(prod_link + f'?page={review_page}', check_pages=False)
                 self.random_sleep()
                 random.shuffle(reviews_link)
                 save_review(reviews_link)
+            
             
                         
     def main(self, url):
