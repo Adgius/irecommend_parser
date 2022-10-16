@@ -1,4 +1,7 @@
 import undetected_chromedriver as uc
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.by import By
 import re
 import pandas as pd
 import time
@@ -13,13 +16,18 @@ class EboboParser():
         os.makedirs('output', exist_ok=True)
         self.head_link = 'https://irecommend.ru'
         options  = uc.ChromeOptions()
-        options.add_argument("--headless")
-        #options.capabilities['pageLoadStrategy'] = "none"
-        #self.driver = uc.Chrome(options = options)
-        self.driver = uc.Chrome()
+        #options.add_argument("--headless")
+        options.capabilities['pageLoadStrategy'] = "none"
+        self.driver = uc.Chrome(options = options)
+        #self.driver = uc.Chrome()
+        self.wait = WebDriverWait(self.driver, 30)
 
     def random_sleep(self):
         time.sleep(random.randint(1, 3))
+
+    def sleep_until(self, css):
+        self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, css)))
+        self.driver.execute_script("window.stop();")
 
     def notice_product(self, prod_link):
         products_table = pd.read_csv(r'output\products_link.csv', sep=';', index_col=0)
@@ -29,6 +37,7 @@ class EboboParser():
     def parse_products(self, url, page):
         products_table = pd.DataFrame(columns=['title', 'rating', 'parsed'])
         self.driver.get(url + f'?page={page}')
+        self.sleep_until('.ProductTizer.plate.teaser-item')
         products_page = self.driver.page_source
         soup = BeautifulSoup(products_page, 'html.parser')
         products = soup.select('.ProductTizer.plate.teaser-item')
@@ -50,9 +59,10 @@ class EboboParser():
     def get_reviews(self, prod_url, check_pages=True):
         reviews_link = pd.DataFrame(columns=['prod_link', 'review_link', 'review'])
         self.driver.get(prod_url)
+        self.sleep_until('h1.largeHeader')
+        prod_url = prod_url.split('?')[0] #Убираем номер страницы (чтобы в табличке ссылки не дубл)
         reviews_page = self.driver.page_source
         soup = BeautifulSoup(reviews_page, 'html.parser')
-
         title = soup.find('h1', {'class': 'largeHeader'}).find('span').text
         print(f'|---Парсим отзывы {title}')
         items = soup.find('ul', {'class': 'list-comments'})
@@ -76,26 +86,29 @@ class EboboParser():
 
     def parse_review_text(self, url):
         self.driver.get(url)
-        self.random_sleep()
-        review_page = self.driver.page_source
-        soup = BeautifulSoup(review_page, 'html.parser')
-        title = soup.find('h2', {'class': 'reviewTitle'}).text
-        part = ''
-        for sel in soup.select('.description.hasinlineimage ul, p'):
-            first = True
-            for t in sel:
-                if re.search(r'\s{3,}', t.text):
-                    break
-                if sel.find('li'):
-                    if first:
-                        part += t.text
-                        first = False
+        try:
+            self.sleep_until('h2.reviewTitle')
+            review_page = self.driver.page_source
+            soup = BeautifulSoup(review_page, 'html.parser')
+            title = soup.find('h2', {'class': 'reviewTitle'}).text
+            part = ''
+            for sel in soup.select('.description.hasinlineimage ul, p'):
+                first = True
+                for t in sel:
+                    if re.search(r'\s{3,}', t.text):
+                        break
+                    if sel.find('li'):
+                        if first:
+                            part += t.text
+                            first = False
+                        else:
+                            part += ', ' + t.text
                     else:
-                        part += ', ' + t.text
-                else:
-                    first = False
-                    part += t.text + '\n'
-        return title, part
+                        first = False
+                        part += t.text + '\n'
+            return title, part
+        except AttributeError:
+            return None
 
     def agg_reviews_text(self, prod_link, review_pages,  reviews_link):
         
@@ -103,17 +116,21 @@ class EboboParser():
 
         def save_review(reviews_link):
             for review_link in tqdm(reviews_link):
-                title, text = self.parse_review_text(review_link)
+                output = self.parse_review_text(review_link)
                 table = pd.read_csv(r'output\reviews_link.csv', sep=';')
                 key = table['prod_link'] == prod_link
                 key = key & (table['review_link'] == review_link)
-                table.loc[key, 'review'] = [{'title': title, 'text': text}]
+                if output:
+                    title, text = output
+                    table.loc[key, 'review'] = [{'title': title, 'text': text}]
+                else:
+                    table.loc[key, 'review'] = None
                 table.to_csv(r'output\reviews_link.csv', index=False, sep=';')
 
         random.shuffle(reviews_link)
         save_review(reviews_link)
         if review_pages > 1:
-            for review_page in range(1, review_pages):
+            for review_page in range(2, review_pages+1):
                 _,  reviews_link = self.get_reviews(prod_link + f'?page={review_page}', check_pages=False)
                 self.random_sleep()
                 random.shuffle(reviews_link)
