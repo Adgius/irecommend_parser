@@ -1,4 +1,5 @@
 import undetected_chromedriver as uc
+import selenium
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
@@ -59,35 +60,40 @@ class EboboParser():
     def get_reviews(self, prod_url, check_pages=True):
         reviews_link = pd.DataFrame(columns=['prod_link', 'review_link', 'review'])
         self.driver.get(prod_url)
-        self.sleep_until('h1.largeHeader')
-        prod_url = prod_url.split('?')[0] #Убираем номер страницы (чтобы в табличке ссылки не дубл)
-        reviews_page = self.driver.page_source
-        soup = BeautifulSoup(reviews_page, 'html.parser')
-        title = soup.find('h1', {'class': 'largeHeader'}).find('span').text
-        print(f'|---Парсим отзывы {title}')
-        items = soup.find('ul', {'class': 'list-comments'})
-        reviews = items.find_all('li')
-        random.shuffle(reviews)
-        review_pages = 1
-        for n, rev in enumerate(reviews):
-            review_link = self.head_link + rev.select('div.reviewTextSnippet a.more')[0]['href']
-            reviews_link.loc[n, ] = [prod_url, review_link, None]
-        if check_pages:
-            if soup.find('ul', {'class': 'pager'}):
-                review_pages = int(soup.find('li', {'class': 'pager-last'}).text)
-        if os.path.isfile(r'output\reviews_link.csv'):
-            table = pd.read_csv(r'output\reviews_link.csv', sep=';')
-            reviews_link = pd.concat([table, reviews_link])
-            reviews_link = reviews_link.sort_values('review').drop_duplicates(['prod_link', 'review_link'], ignore_index=False)
-        reviews_link.to_csv(r'output\reviews_link.csv', index=False, sep=';')
-        self.random_sleep()
-        return review_pages, reviews_link.loc[reviews_link['review'].isna(), 'review_link'].values
+        try:
+            self.sleep_until('h1.largeHeader')
+            prod_url = prod_url.split('?')[0] #Убираем номер страницы (чтобы в табличке ссылки не дубл)
+            reviews_page = self.driver.page_source
+            soup = BeautifulSoup(reviews_page, 'html.parser')
+            title = soup.find('h1', {'class': 'largeHeader'}).find('span').text
+            print(f'|---Парсим отзывы {title}')
+            items = soup.find('ul', {'class': 'list-comments'})
+            reviews = items.find_all('li')
+            random.shuffle(reviews)
+            review_pages = 1
+            for n, rev in enumerate(reviews):
+                review_link = self.head_link + rev.select('div.reviewTextSnippet a.more')[0]['href']
+                reviews_link.loc[n, ] = [prod_url, review_link, None]
+            if check_pages:
+                if soup.find('ul', {'class': 'pager'}):
+                    review_pages = int(soup.find('li', {'class': 'pager-last'}).text)
+            if os.path.isfile(r'output\reviews_link.csv'):
+                table = pd.read_csv(r'output\reviews_link.csv', sep=';')
+                reviews_link = pd.concat([table, reviews_link])
+                reviews_link = reviews_link.sort_values('review').drop_duplicates(['prod_link', 'review_link'], ignore_index=False)
+            reviews_link.to_csv(r'output\reviews_link.csv', index=False, sep=';')
+            self.random_sleep()
+            return review_pages, reviews_link.loc[reviews_link['review'].isna(), 'review_link'].values
+        except (AttributeError, selenium.common.exceptions.TimeoutException):
+            print('1')
+            return 0, []
 
 
     def parse_review_text(self, url):
         self.driver.get(url)
         try:
             self.sleep_until('h2.reviewTitle')
+            self.random_sleep()
             review_page = self.driver.page_source
             soup = BeautifulSoup(review_page, 'html.parser')
             title = soup.find('h2', {'class': 'reviewTitle'}).text
@@ -107,7 +113,7 @@ class EboboParser():
                         first = False
                         part += t.text + '\n'
             return title, part
-        except AttributeError:
+        except (AttributeError, selenium.common.exceptions.TimeoutException):
             return None
 
     def agg_reviews_text(self, prod_link, review_pages,  reviews_link):
@@ -118,8 +124,9 @@ class EboboParser():
             for review_link in tqdm(reviews_link):
                 output = self.parse_review_text(review_link)
                 table = pd.read_csv(r'output\reviews_link.csv', sep=';')
-                key = table['prod_link'] == prod_link
-                key = key & (table['review_link'] == review_link)
+                #key = table['prod_link'] == prod_link
+                #key = key & (table['review_link'] == review_link)
+                key = table['review_link'] == review_link
                 if output:
                     title, text = output
                     table.loc[key, 'review'] = [{'title': title, 'text': text}]
