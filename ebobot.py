@@ -1,6 +1,7 @@
 import undetected_chromedriver as uc
 import selenium
 from selenium.webdriver.support.ui import WebDriverWait
+from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 import re
@@ -38,24 +39,27 @@ class EboboParser():
     def parse_products(self, url, page):
         products_table = pd.DataFrame(columns=['title', 'rating', 'parsed'])
         self.driver.get(url + f'?page={page}')
-        self.sleep_until('.ProductTizer.plate.teaser-item')
-        products_page = self.driver.page_source
-        soup = BeautifulSoup(products_page, 'html.parser')
-        products = soup.select('.ProductTizer.plate.teaser-item')
-        print(f'|-Опа ча. На {page+1} странице нашел {len(products)} продуктов')
-        for p in products:
-            title = p.find('div', {'class': 'title'}).text
-            rating = p.find('span', {'class': 'average-rating'}).text
-            rating = float(re.search(r'[\d\.]+', rating)[0])
-            link = self.head_link + p.find('a', {'class': 'read-all-reviews-link'})['href']
-            products_table.loc[link] = [title, rating, False]   
-        if os.path.isfile(r'output\products_link.csv'):
-            prod = pd.read_csv(r'output\products_link.csv', sep=';', index_col=0)
-            products_table = pd.concat([prod, products_table])
-            products_table = products_table.sort_values('parsed', ascending=False).drop_duplicates(['title', 'rating'], ignore_index=False)
-        products_table['parsed'] = products_table['parsed'].astype(bool)
-        products_table.to_csv(r'output\products_link.csv', sep=';')
-        return products_table[~products_table['parsed']].index.values
+        try:
+            self.sleep_until('.ProductTizer.plate.teaser-item')
+            products_page = self.driver.page_source
+            soup = BeautifulSoup(products_page, 'html.parser')
+            products = soup.select('.ProductTizer.plate.teaser-item')
+            print(f'|-Опа ча. На {page+1} странице нашел {len(products)} продуктов')
+            for p in products:
+                title = p.find('div', {'class': 'title'}).text
+                rating = p.find('span', {'class': 'average-rating'}).text
+                rating = float(re.search(r'[\d\.]+', rating)[0])
+                link = self.head_link + p.find('a', {'class': 'read-all-reviews-link'})['href']
+                products_table.loc[link] = [title, rating, False]   
+            if os.path.isfile(r'output\products_link.csv'):
+                prod = pd.read_csv(r'output\products_link.csv', sep=';', index_col=0)
+                products_table = pd.concat([prod, products_table])
+                products_table = products_table.sort_values('parsed', ascending=False).drop_duplicates(['title', 'rating'], ignore_index=False)
+            products_table['parsed'] = products_table['parsed'].astype(bool)
+            products_table.to_csv(r'output\products_link.csv', sep=';')
+            return products_table[~products_table['parsed']].index.values
+        except (AttributeError, TimeoutException):
+            return []
 
     def get_reviews(self, prod_url, check_pages=True):
         reviews_link = pd.DataFrame(columns=['prod_link', 'review_link', 'review'])
@@ -84,8 +88,7 @@ class EboboParser():
             reviews_link.to_csv(r'output\reviews_link.csv', index=False, sep=';')
             self.random_sleep()
             return review_pages, reviews_link.loc[reviews_link['review'].isna(), 'review_link'].values
-        except (AttributeError, selenium.common.exceptions.TimeoutException):
-            print('1')
+        except (AttributeError, TimeoutException):
             return 0, []
 
 
@@ -113,7 +116,7 @@ class EboboParser():
                         first = False
                         part += t.text + '\n'
             return title, part
-        except (AttributeError, selenium.common.exceptions.TimeoutException):
+        except (AttributeError, TimeoutException):
             return None
 
     def agg_reviews_text(self, prod_link, review_pages,  reviews_link):
