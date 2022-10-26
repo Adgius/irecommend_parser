@@ -1,9 +1,4 @@
 import undetected_chromedriver as uc
-import selenium
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.common.exceptions import TimeoutException
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.common.by import By
 import re
 import pandas as pd
 import time
@@ -12,27 +7,35 @@ from bs4 import BeautifulSoup
 from tqdm import tqdm
 import os
 
+import socket
+import socks
+from urllib.request import urlopen
+from stem import Signal
+from stem.control import Controller
+
+from fake_useragent import UserAgent
+import requests
+from requests.exceptions import ConnectionError, ReadTimeout
+
+
 class EboboParser():
 
     def __init__(self):
         os.makedirs('output', exist_ok=True)
         self.head_link = 'https://irecommend.ru'
-        options  = uc.ChromeOptions()
-        options.set_preference('network.proxy.type', 1)
-        options.set_preference('network.proxy.socks', '127.0.0.1')
-        options.set_preference('network.proxy.socks_port', 9150)
-        #options.add_argument("--headless")
-        options.capabilities['pageLoadStrategy'] = "none"
-        self.driver = uc.Chrome(options = options)
-        #self.driver = uc.Chrome()
-        self.wait = WebDriverWait(self.driver, 30)
+        self.ua = UserAgent(use_cache_server=False)
+        self.controller = Controller.from_port(port=9051)
+        self.n_req = 0
+
+    def change_IP(self):
+        socks.setdefaultproxy(socks.PROXY_TYPE_SOCKS5, "127.0.0.1", 9050, True)
+        socket.socket = socks.socksocket
+        self.controller.authenticate("228")
+        self.controller.signal(Signal.NEWNYM)
+        print('New IP:', urlopen('http://icanhazip.com').read())
 
     def random_sleep(self):
-        time.sleep(random.randint(1, 3))
-
-    def sleep_until(self, css):
-        self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, css)))
-        self.driver.execute_script("window.stop();")
+        time.sleep(random.randint(3, 6))
 
     def notice_product(self, prod_link):
         products_table = pd.read_csv(r'output\products_link.csv', sep=';', index_col=0)
@@ -40,12 +43,17 @@ class EboboParser():
         products_table.to_csv(r'output\products_link.csv', sep=';')
     
     def parse_products(self, url, page):
-        products_table = pd.DataFrame(columns=['title', 'rating', 'parsed'])
-        self.driver.get(url + f'?page={page}')
         try:
-            self.sleep_until('.ProductTizer.plate.teaser-item')
-            products_page = self.driver.page_source
+            products_table = pd.DataFrame(columns=['title', 'rating', 'parsed'])
+            r = requests.get(url + f'?page={page}', headers={'User-Agent': self.ua.chrome}, timeout=15)
+            self.random_sleep()
+            products_page = r.content
             soup = BeautifulSoup(products_page, 'html.parser')
+
+            self.n_req += 1
+            if self.n_req % 5 == 0:
+                self.change_IP()
+
             products = soup.select('.ProductTizer.plate.teaser-item')
             print(f'|-Опа ча. На {page+1} странице нашел {len(products)} продуктов')
             for p in products:
@@ -61,17 +69,24 @@ class EboboParser():
             products_table['parsed'] = products_table['parsed'].astype(bool)
             products_table.to_csv(r'output\products_link.csv', sep=';')
             return products_table[~products_table['parsed']].index.values
-        except (AttributeError, TimeoutException):
+        except (ConnectionError, AttributeError, ReadTimeout) as e:
+            print(e)
+            self.change_IP()
             return []
 
     def get_reviews(self, prod_url, check_pages=True):
-        reviews_link = pd.DataFrame(columns=['prod_link', 'review_link', 'review'])
-        self.driver.get(prod_url)
         try:
-            self.sleep_until('h1.largeHeader')
-            prod_url = prod_url.split('?')[0] #Убираем номер страницы (чтобы в табличке ссылки не дубл)
-            reviews_page = self.driver.page_source
+            reviews_link = pd.DataFrame(columns=['prod_link', 'review_link', 'review'])
+            r = requests.get(prod_url, headers={'User-Agent': self.ua.chrome}, timeout=15)
+            self.random_sleep()
+
+            self.n_req += 1
+            if self.n_req % 5 == 0:
+                self.change_IP()
+
+            reviews_page = r.content
             soup = BeautifulSoup(reviews_page, 'html.parser')
+            prod_url = prod_url.split('?')[0] #Убираем номер страницы (чтобы в табличке ссылки не дубл)
             title = soup.find('h1', {'class': 'largeHeader'}).find('span').text
             print(f'|---Парсим отзывы {title}')
             items = soup.find('ul', {'class': 'list-comments'})
@@ -91,16 +106,22 @@ class EboboParser():
             reviews_link.to_csv(r'output\reviews_link.csv', index=False, sep=';')
             self.random_sleep()
             return review_pages, reviews_link.loc[reviews_link['review'].isna(), 'review_link'].values
-        except (AttributeError, TimeoutException):
+        except (ConnectionError, AttributeError, ReadTimeout) as e:
+            print(e)
+            self.change_IP()
             return 0, []
 
 
     def parse_review_text(self, url):
-        self.driver.get(url)
         try:
-            self.sleep_until('h2.reviewTitle')
+            r = requests.get(url, headers={'User-Agent': self.ua.chrome}, timeout=15)
             self.random_sleep()
-            review_page = self.driver.page_source
+
+            self.n_req += 1
+            if self.n_req % 5 == 0:
+                self.change_IP()
+
+            review_page = r.content
             soup = BeautifulSoup(review_page, 'html.parser')
             title = soup.find('h2', {'class': 'reviewTitle'}).text
             part = ''
@@ -119,7 +140,9 @@ class EboboParser():
                         first = False
                         part += t.text + '\n'
             return title, part
-        except (AttributeError, TimeoutException):
+        except (ConnectionError, AttributeError, ReadTimeout) as e:
+            print(e)
+            self.change_IP()
             return None
 
     def agg_reviews_text(self, prod_link, review_pages,  reviews_link):
@@ -127,6 +150,10 @@ class EboboParser():
         print(f'|------Нашлось {review_pages} страниц отзывов')
 
         def save_review(reviews_link):
+
+            if self.n_req % 5 == 0:
+                self.change_IP()
+
             for review_link in tqdm(reviews_link):
                 output = self.parse_review_text(review_link)
                 table = pd.read_csv(r'output\reviews_link.csv', sep=';')
@@ -163,6 +190,9 @@ class EboboParser():
                 5. Если несколько страниц отзывов (цикл 3 -- страницы)
                     5. Рандомно парсит отзывы
         """
+
+        self.change_IP()
+ 
         for page in range(100):
             prod_links = self.parse_products(url, page)
             self.random_sleep()
@@ -186,4 +216,4 @@ if __name__ == '__main__':
 
     """)
     parser = EboboParser()
-    parser.main('https://irecommend.ru/catalog/list/31')
+    parser.main('https://irecommend.ru/catalog/list/43941-44139')
